@@ -47,3 +47,6 @@ npm run dev
 ```
 
 Для GitHub Pages используется `.github/workflows/deploy.yml`.
+
+### Важное исправление
+`index.html` явно загружает `./supabase-config.js` до запуска React. Это обязательно для GitHub Pages, потому что конфигурация Supabase хранится в `window.DP_SUPABASE_CONFIG`.
