@@ -1,21 +1,62 @@
-import React,{useMemo,useState} from 'react';
+import React,{useEffect,useMemo,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import html2canvas from 'html2canvas';
-import {jsPDF} from 'jspdf';
 import {Home,Bath,Boxes,FileText,Users,Settings,Search,ChevronRight,Truck,Building2,Hammer,Save,Printer,ArrowLeft,Sparkles,Info,X} from 'lucide-react';
 import {catalog} from './catalog';
 import type {Project} from './types';
+import {supabase,supabaseConfigured} from './supabase';
 import './styles.css';
 
 const money=(n:number)=>new Intl.NumberFormat('ru-RU').format(Math.round(n))+' ₽';
-const save=(k:string,v:any)=>localStorage.setItem(k,JSON.stringify(v));
-const load=(k:string,d:any)=>{try{return JSON.parse(localStorage.getItem(k)||'')??d}catch{return d}};
 const deliveryCities=['Пермь','Екатеринбург','Тюмень','Уфа','Челябинск','Казань','Москва','Сургут','Другой город'];
 
 type ManualItem={id:string;name:string;price:number;source:string;};
 type Quote={id:string;kind:string;client:any;project:string;base:number;items:any[];manualItems:ManualItem[];external:any;total:number;createdAt:string;notes:string};
 
-function App(){
+type AuthMode='login'|'signup';
+
+function AuthGate(){
+ const [session,setSession]=useState<any>(null);
+ const [loading,setLoading]=useState(true);
+ useEffect(()=>{
+   if(!supabaseConfigured || !supabase){setLoading(false);return;}
+   let alive=true;
+   supabase.auth.getSession().then(({data})=>{if(alive){setSession(data.session);setLoading(false)}}).catch(()=>alive&&setLoading(false));
+   const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,next)=>setSession(next));
+   return ()=>{alive=false;subscription.unsubscribe()};
+ },[]);
+ if(!supabaseConfigured || !supabase) return <SetupAuthPage/>;
+ if(loading) return <div className="auth-screen"><div className="auth-card loading-card"><div className="auth-logo">DP <b>MODULE</b></div><p>Проверяем авторизацию…</p></div></div>;
+ if(!session) return <AuthPage/>;
+ return <SalesApp user={session.user}/>;
+}
+
+function SetupAuthPage(){return <div className="auth-screen"><div className="auth-card setup-card"><div className="auth-logo">DP <b>MODULE</b></div><div className="eyebrow">ПЕРВЫЙ ЗАПУСК</div><h1>Подключите авторизацию</h1><p>Сайт готов к работе с Supabase. Осталось один раз указать адрес проекта и Publishable Key.</p><div className="setup-code"><div><b>public/supabase-config.js</b></div><pre>{`window.DP_SUPABASE_CONFIG = {\n  url: 'https://YOUR_PROJECT.supabase.co',\n  publishableKey: 'sb_publishable_...'\n};`}</pre></div><p className="auth-muted">Не вставляйте сюда Secret / service_role key.</p></div></div>}
+
+function AuthPage(){
+ const [mode,setMode]=useState<AuthMode>('login');
+ const [name,setName]=useState(''); const [email,setEmail]=useState(''); const [password,setPassword]=useState('');
+ const [busy,setBusy]=useState(false); const [error,setError]=useState(''); const [success,setSuccess]=useState('');
+ const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError('');setSuccess('');
+   try{
+     if(mode==='login'){
+       const {error}=await supabase!.auth.signInWithPassword({email,password}); if(error) throw error;
+     } else {
+       const {data,error}=await supabase!.auth.signUp({email,password,options:{data:{full_name:name},emailRedirectTo:window.location.href.split('#')[0]}});
+       if(error) throw error;
+       if(!data.session) setSuccess('Регистрация создана. Проверьте почту для подтверждения аккаунта, затем войдите.');
+       else setSuccess('Аккаунт создан.');
+     }
+   }catch(err:any){setError(err?.message||'Не удалось выполнить операцию.')}finally{setBusy(false)}
+ };
+ return <div className="auth-screen"><div className="auth-card"><div className="auth-logo">DP <b>MODULE</b></div><div className="eyebrow">SALES CONFIGURATOR</div><h1>{mode==='login'?'Вход в систему':'Регистрация менеджера'}</h1><p className="auth-sub">Доступ к каталогу, расчётам, КП и клиентам только после авторизации.</p><form onSubmit={submit}>
+   {mode==='signup'&&<Field label="Имя менеджера"><input value={name} onChange={e=>setName(e.target.value)} placeholder="Константин" required/></Field>}
+   <Field label="E-mail"><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="manager@company.ru" required/></Field>
+   <Field label="Пароль"><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Минимум 6 символов" minLength={6} required/></Field>
+   {error&&<div className="auth-error">{error}</div>}{success&&<div className="auth-success">{success}</div>}
+   <button className="primary full" disabled={busy}>{busy?'Подождите…':mode==='login'?'Войти':'Зарегистрироваться'}</button>
+ </form><button className="auth-switch" onClick={()=>{setMode(mode==='login'?'signup':'login');setError('');setSuccess('')}}>{mode==='login'?'Нет аккаунта? Зарегистрироваться':'Уже зарегистрированы? Войти'}</button><div className="auth-foot">Каждый менеджер видит только свои КП и клиентов.</div></div></div>}
+
+function SalesApp({user}:{user:any}){
  const [page,setPage]=useState<'catalog'|'config'|'custom'|'quotes'|'clients'|'settings'|'quote'>('catalog');
  const [tab,setTab]=useState<'houses'|'baths'|'complexes'>('houses');
  const [q,setQ]=useState(''); const [project,setProject]=useState<Project|null>(null); const [kind,setKind]=useState<'ready'|'custom'|'complex'>('ready');
@@ -25,7 +66,21 @@ function App(){
  const [deliveryMode,setDeliveryMode]=useState('manual'); const [deliveryCity,setDeliveryCity]=useState('');
  const [foundationMode,setFoundationMode]=useState('none'); const [montageMode,setMontageMode]=useState('manual'); const [productionCity,setProductionCity]=useState('Екатеринбург'); const [distanceKm,setDistanceKm]=useState('');
  const [custom,setCustom]=useState({name:'Индивидуальный проект',base:0,area:'',modules:'1',length:'',width:'',height:'2700',rooms:'',color:'',notes:''});
- const [quotes,setQuotes]=useState<Quote[]>(()=>load('dp_quotes',[])); const [clients,setClients]=useState<any[]>(()=>load('dp_clients',[]));
+ const [quotes,setQuotes]=useState<Quote[]>([]); const [clients,setClients]=useState<any[]>([]); const [cloudBusy,setCloudBusy]=useState(false); const [cloudError,setCloudError]=useState('');
+ useEffect(()=>{
+   let active=true;
+   (async()=>{
+     const [{data:qRows,error:qError},{data:cRows,error:cError}]=await Promise.all([
+       supabase!.from('quotes').select('*').order('created_at',{ascending:false}),
+       supabase!.from('clients').select('*').order('created_at',{ascending:false})
+     ]);
+     if(!active)return;
+     if(qError||cError){setCloudError(qError?.message||cError?.message||'Не удалось загрузить облачные данные.');return;}
+     setQuotes((qRows||[]).map((r:any)=>({id:r.quote_number,kind:r.kind,client:r.client||{},project:r.project||'',base:Number(r.base||0),items:r.items||[],manualItems:r.manual_items||[],external:r.external||{},total:Number(r.total||0),createdAt:r.created_at,notes:r.notes||''})));
+     setClients(cRows||[]);
+   })();
+   return ()=>{active=false};
+ },[user.id]);
  const projects=useMemo(()=>tab==='complexes'?[]:catalog.projects.filter(p=>{const type=catalog.families.find(f=>f.id===p.family)?.type;return type===(tab==='houses'?'house':'bath')&&(!q||p.name.toLowerCase().includes(q.toLowerCase())||catalog.families.find(f=>f.id===p.family)?.name.toLowerCase().includes(q.toLowerCase()))}),[tab,q]);
  const complexes=useMemo(()=>catalog.complexes.filter(x=>!q||x.name.toLowerCase().includes(q.toLowerCase())),[q]);
  const base=kind==='ready'?(project?.price||0):kind==='complex'?(project?.price||0):Number(custom.base||0);
@@ -41,11 +96,13 @@ function App(){
  const applyDelivery=(mode:string)=>{setDeliveryMode(mode);if(mode==='doc-example'){setExternal(e=>({...e,delivery:230000}))}else if(mode==='manual'){setExternal(e=>({...e,delivery:e.delivery||0}))}else{setExternal(e=>({...e,delivery:0}))}};
  const applyFoundation=(mode:string)=>{setFoundationMode(mode);const price=mode==='screw'?220000:0;setExternal(e=>({...e,foundation:price}))};
  const applyMontage=(mode:string)=>{setMontageMode(mode);if(mode!=='manual')setExternal(e=>({...e,montage:mode==='kp'?300000:0}))};
- const storeQuote=()=>{const quote:Quote={id:`DP-${Date.now()}`,kind,client,project:kind==='custom'?custom.name:(project?.name||''),base,items:selected.map(id=>catalog.options.find(o=>o.id===id)).filter(Boolean),manualItems,external:{...external,montage:effectiveMontage,deliveryCity,deliveryMode,foundationMode,montageMode,productionCity,distanceKm},total,createdAt:new Date().toISOString(),notes:kind==='custom'?custom.notes:''};const next=[quote,...quotes];setQuotes(next);save('dp_quotes',next);setPage('quotes')};
- const addClient=()=>{const c={...client,id:Date.now()};const next=[c,...clients];setClients(next);save('dp_clients',next)};
- return <div className="app"><header><div className="brand">DP <span>MODULE</span><small>SALES CONFIGURATOR</small></div><div className="top-actions"><span className="db"><i/> Каталог и цены загружены</span><button className="darkbtn" onClick={newCalc}>+ Новый расчёт</button></div></header>
+ const storeQuote=async()=>{setCloudBusy(true);setCloudError('');const quoteNumber=`DP-${new Date().getFullYear()}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;const payload={user_id:user.id,quote_number:quoteNumber,kind,client,project:kind==='custom'?custom.name:(project?.name||''),base,items:selected.map(id=>catalog.options.find(o=>o.id===id)).filter(Boolean),manual_items:manualItems,external:{...external,montage:effectiveMontage,deliveryCity,deliveryMode,foundationMode,montageMode,productionCity,distanceKm},total,notes:kind==='custom'?custom.notes:''};const {data,error}=await supabase!.from('quotes').insert(payload).select('*').single();if(error){setCloudError(error.message);setCloudBusy(false);return;}const row:Quote={id:data.quote_number,kind:data.kind,client:data.client||{},project:data.project||'',base:Number(data.base||0),items:data.items||[],manualItems:data.manual_items||[],external:data.external||{},total:Number(data.total||0),createdAt:data.created_at,notes:data.notes||''};setQuotes(p=>[row,...p]);setCloudBusy(false);setPage('quotes')};
+ const addClient=async()=>{setCloudError('');const {data,error}=await supabase!.from('clients').insert({user_id:user.id,name:client.name,phone:client.phone,email:client.email,city:client.city,address:client.address}).select('*').single();if(error){setCloudError(error.message);return;}setClients(p=>[data,...p])};
+ const logout=async()=>{await supabase!.auth.signOut()};
+ return <div className="app"><header><div className="brand">DP <span>MODULE</span><small>SALES CONFIGURATOR</small></div><div className="top-actions"><span className="db"><i/> {user.user_metadata?.full_name||'Менеджер'} · {user.email}</span><button className="darkbtn" onClick={newCalc}>+ Новый расчёт</button><button className="logoutbtn" onClick={logout}>Выйти</button></div></header>
   <aside className="sidebar"><Nav icon={<Home/>} label="Каталог" active={['catalog','config','custom'].includes(page)} onClick={()=>setPage('catalog')}/><Nav icon={<Sparkles/>} label="Свой проект" active={page==='custom'} onClick={goCustom}/><Nav icon={<FileText/>} label="КП" active={['quote','quotes'].includes(page)} onClick={()=>setPage('quotes')}/><Nav icon={<Users/>} label="Клиенты" active={page==='clients'} onClick={()=>setPage('clients')}/><div className="side-sep">Система</div><Nav icon={<Settings/>} label="Настройки" active={page==='settings'} onClick={()=>setPage('settings')}/><div className="source-note"><span>Источник данных</span><b>Модели / площади / габариты / цены — каталог PDF</b><b>Опции — КП «Модерн 60»</b><b>Логистика — только документно подтверждённые суммы</b></div></aside>
   <main>
+   {cloudError&&<div className="cloud-error">{cloudError}</div>}
    {page==='catalog'&&<CatalogPage tab={tab} setTab={setTab} q={q} setQ={setQ} projects={projects} complexes={complexes} families={catalog.families} onChoose={choose} onComplex={chooseComplex} goCustom={goCustom}/>} 
    {page==='custom'&&<CustomPage custom={custom} setCustom={setCustom} onNext={()=>setPage('config')}/>} 
    {page==='config'&&<ConfigPage kind={kind} project={project} custom={custom} selected={selected} setSelected={setSelected} manualItems={manualItems} setManualItems={setManualItems} client={client} setClient={setClient} external={{...external,montage:effectiveMontage}} setExternal={setExternal} deliveryMode={deliveryMode} deliveryCity={deliveryCity} setDeliveryCity={setDeliveryCity} foundationMode={foundationMode} montageMode={montageMode} productionCity={productionCity} setProductionCity={setProductionCity} distanceKm={distanceKm} setDistanceKm={setDistanceKm} applyDelivery={applyDelivery} applyFoundation={applyFoundation} applyMontage={applyMontage} total={total} onSave={storeQuote} onQuote={()=>setPage('quote')}/>} 
@@ -69,110 +126,9 @@ function ConfigPage({kind,project,custom,selected,setSelected,manualItems,setMan
  const [manualName,setManualName]=useState('');const [manualPrice,setManualPrice]=useState('');
  const addManual=()=>{if(!manualName.trim()||Number(manualPrice)<=0)return;setManualItems((p:ManualItem[])=>[...p,{id:`manual-${Date.now()}`,name:manualName.trim(),price:Number(manualPrice),source:'Введено менеджером'}]);setManualName('');setManualPrice('')};
  return <><div className="herohead"><div><button className="back" onClick={onQuote?()=>history.back():undefined}><ArrowLeft/> Назад</button><div className="eyebrow">ЭТАП 2–3 / КОНФИГУРАТОР</div><h1>{title}</h1><p>{subtitle}</p></div></div><div className="config-layout"><div><section className="form-card"><div className="section-title">Клиент</div><div className="fields"><Field label="ФИО"><input value={client.name} onChange={e=>setClient({...client,name:e.target.value})}/></Field><Field label="Телефон"><input value={client.phone} onChange={e=>setClient({...client,phone:e.target.value})}/></Field><Field label="E-mail"><input value={client.email} onChange={e=>setClient({...client,email:e.target.value})}/></Field><Field label="Город клиента"><input value={client.city} onChange={e=>setClient({...client,city:e.target.value})}/></Field><Field label="Адрес участка"><input value={client.address} onChange={e=>setClient({...client,address:e.target.value})}/></Field></div></section><section className="form-card"><div className="section-title">Этап 2 — дополнительные опции</div>{confirmed&&<><div className="subhead">Высота в коньке</div><div className="radio-row">{[{id:'base',label:'2700 мм',price:0},{...heights.find(x=>x.id==='h3300')!,label:'3300 мм'},{...heights.find(x=>x.id==='h3400')!,label:'3400 мм'},{...heights.find(x=>x.id==='h3500')!,label:'3500 мм'}].map((h:any)=><label className={'radio-card '+((h.id==='base'&&!selectedHeight)||selectedHeight===h.id?'selected':'')} key={h.id}><input type="radio" name="height" checked={(h.id==='base'&&!selectedHeight)||selectedHeight===h.id} onChange={()=>{if(h.id==='base')setSelected((p:string[])=>p.filter((x:string)=>!heights.some(z=>z.id===x)));else setHeight(h.id)}}/><span><b>{h.label}</b><small>{h.price?`+ ${money(h.price)}`:'база'}</small></span></label>)}</div></>}{isHouse?<><div className="notice"><Info/> Дополнительные опции доступны для всех моделей домов в конфигураторе. Указанные суммы — точные значения из КП «Модерн 60»; для других моделей система сохраняет этот тариф как документный ориентир до подтверждения менеджером/конструктором.</div><div className="option-list">{otherOptions.map(o=><label className="opt" key={o.id}><span><input type="checkbox" checked={selected.includes(o.id)} onChange={()=>toggle(o.id)}/><b>{o.name}</b><small>{o.group} · {o.calc} · {o.source}</small></span><strong>{money(o.price)}</strong></label>)}</div></>:<div className="notice"><Info/> Для бань и готовых комплексов эти документные опции не добавляются автоматически: используйте согласованные ручные позиции или отдельный прайс.</div>}<div className="subhead">Ручная согласованная позиция</div><div className="manual-row"><input placeholder="Название позиции" value={manualName} onChange={e=>setManualName(e.target.value)}/><input type="number" placeholder="Цена, ₽" value={manualPrice} onChange={e=>setManualPrice(e.target.value)}/><button className="secondary" onClick={addManual}>Добавить</button></div>{manualItems.length>0&&<div className="manual-list">{manualItems.map(i=><div className="manual-item" key={i.id}><span>{i.name}<small>{i.source}</small></span><b>{money(i.price)}</b><button onClick={()=>setManualItems((p:ManualItem[])=>p.filter(x=>x.id!==i.id))}>×</button></div>)}</div>}</section></div><div><section className="form-card"><div className="section-title">Этап 3 — доставка</div><Field label="Город доставки"><select value={deliveryCity} onChange={e=>setDeliveryCity(e.target.value)}><option value="">Выберите город</option>{deliveryCities.map(c=><option key={c}>{c}</option>)}</select></Field><Field label="Стоимость доставки"><select value={deliveryMode} onChange={e=>applyDelivery(e.target.value)}><option value="manual">Ввести согласованную сумму</option><option value="doc-example">230 000 ₽ — значение из КП «Модерн 60», город в КП не указан</option><option value="unknown">Тариф отсутствует в загруженных документах</option></select></Field>{deliveryMode==='manual'&&<input className="moneyinput" type="number" placeholder="Введите сумму" value={external.delivery||''} onChange={e=>setExternal({...external,delivery:Number(e.target.value)})}/>}<div className="note">По загруженным документам нет отдельной таблицы «город → доставка». Поэтому для городов не подставляется выдуманная цена. 230 000 ₽ можно выбрать только как документный пример конкретного КП.</div></section><section className="form-card"><div className="section-title">Фундамент</div><select value={foundationMode} onChange={e=>applyFoundation(e.target.value)}><option value="none">Не выбран</option><option value="existing">Существующий — 0 ₽ в расчёте дома</option><option value="screw">220 000 ₽ — свайно-винтовой, пример из КП «Модерн 60»</option><option value="fbs">ФБС — точная цена в загруженных документах не указана</option><option value="reinforce">Локальное усиление — по расчёту КР</option></select>{foundationMode==='existing'&&<div className="note">В индивидуальном КП «Канада 24» существующий фундамент использовался по координационной схеме, при этом потребовалось локальное усиление — 2 дополнительные винтовые сваи; стоимость усиления в КП не указана.</div>}</section><section className="form-card"><div className="section-title">Монтаж</div><select value={montageMode} onChange={e=>applyMontage(e.target.value)}><option value="manual">Ввести согласованную сумму</option><option value="free70">Бесплатная установка и монтаж до 70 км от производства</option><option value="kp">300 000 ₽ — значение из КП «Модерн 60»</option></select>{montageMode==='manual'&&<input className="moneyinput" type="number" placeholder="Введите сумму" value={external.montage||''} onChange={e=>setExternal({...external,montage:Number(e.target.value)})}/>} {montageMode==='free70'&&<><div className="fields compact"><Field label="Производство"><select value={productionCity} onChange={e=>setProductionCity(e.target.value)}><option>Екатеринбург</option><option>Новосибирск</option></select></Field><Field label="Расстояние до участка, км"><input type="number" value={distanceKm} onChange={e=>setDistanceKm(e.target.value)} placeholder="0–70"/></Field></div><div className="note">По каталогу бесплатные установка и монтаж заявлены в пределах 70 км от производства в Екатеринбурге и Новосибирске. Для расстояния свыше 70 км бесплатный режим не применяется — введите согласованную стоимость вручную.</div>{Number(distanceKm)>70&&<div className="notice warn">Расстояние больше 70 км. Переключите монтаж на ручную стоимость или согласуйте отдельный тариф.</div>}</>}</section><section className="form-card actions"><div className="big-total"><span>ИТОГО ПО ТЕКУЩЕМУ РАСЧЁТУ</span><b>{money(total)}</b></div><button className="primary full" onClick={onSave}><Save/> Сохранить КП</button><button className="secondary full" onClick={onQuote}><Printer/> Предпросмотр КП</button></section></div></div></>}
-function QuotePage({kind,project,custom,selected,manualItems,client,external,base,total,deliveryCity,deliveryMode,foundationMode,montageMode,onBack}:{kind:any;project:any;custom:any;selected:string[];manualItems:ManualItem[];client:any;external:any;base:number;total:number;deliveryCity:string;deliveryMode:string;foundationMode:string;montageMode:string;onBack:any}){
- const [downloading,setDownloading]=useState(false);
- const opts=selected.map(id=>catalog.options.find(o=>o.id===id)).filter(Boolean) as any[];
- const date=new Date().toLocaleDateString('ru-RU');
- const pageTitle=kind==='custom'?custom.name:(project?.name||'Проект DP MODULE');
- const planSrc=project?.page?`./assets/plan-${project.page}.png`:null;
- const family=catalog.families.find((f:any)=>f.id===project?.family);
- const basicItems=[
-  'Электропроводка: свет, розетки, выключатели',
-  'Внешняя отделка и внешняя покраска',
-  'Качественные входные и межкомнатные двери',
-  'Панорамные / ПВХ-окна по проекту',
-  'Утепление и пароизоляция',
-  'Внутренняя отделка',
-  'Силовой каркас',
-  'Кровля и напольное покрытие',
-  'Установка и монтаж по условиям проекта',
-  'Свободная планировка для индивидуальных изменений'
- ];
- const foundationText=foundationMode==='existing'
-  ?'Существующий фундамент используется по согласованной схеме. Для индивидуального проекта возможны локальные усиления после конструктивного расчёта.'
-  :foundationMode==='screw'
-  ?'Свайно-винтовой фундамент выбран в текущем расчёте. Значение 220 000 ₽ используется как документный тариф из КП «Модерн 60».'
-  :foundationMode==='reinforce'
-  ?'Локальное усиление фундамента выполняется только после проверки конструктором. Стоимость определяется отдельным расчётом.'
-  :foundationMode==='fbs'
-  ?'ФБС выбран как тип основания. Стоимость в загруженных документах не подтверждена и не включена автоматически.'
-  :'Тип фундамента не выбран. Требуется согласование.';
- const houseCost=base+opts.reduce((sum,o)=>sum+o.price,0)+manualItems.reduce((sum,i)=>sum+i.price,0);
- const separateCost=external.delivery+external.foundation+external.montage;
- const priceRows=[
-  {name:'Базовая комплектация',price:base,calc:'по выбранному проекту'},
-  ...opts.map(o=>({name:o.name,price:o.price,calc:o.calc})),
-  ...manualItems.map(i=>({name:i.name,price:i.price,calc:i.source})),
-  ...(external.delivery>0?[{name:`Доставка${deliveryCity?` — ${deliveryCity}`:''}`,price:external.delivery,calc:deliveryMode==='doc-example'?'значение из документа':'согласованная стоимость'}]:[]),
-  ...(external.foundation>0?[{name:'Фундамент',price:external.foundation,calc:foundationMode==='screw'?'свайно-винтовой':'согласованная стоимость'}]:[]),
-  ...(external.montage>0?[{name:'Монтаж',price:external.montage,calc:montageMode==='kp'?'значение из документа':'согласованная стоимость'}]:[])
- ];
- const downloadPdf=async()=>{
-  if(downloading)return;
-  setDownloading(true);
-  try{
-   const pages=Array.from(document.querySelectorAll<HTMLElement>('.pdf-export-page'));
-   if(pages.length!==5)throw new Error('Шаблон должен содержать 5 страниц');
-   if(document.fonts?.ready) await document.fonts.ready;
-   await new Promise(r=>setTimeout(r,150));
-   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
-   for(let i=0;i<pages.length;i++){
-    const canvas=await html2canvas(pages[i],{scale:2,backgroundColor:'#ffffff',useCORS:true,allowTaint:false,logging:false,width:794,height:1123,windowWidth:794,windowHeight:1123});
-    if(i>0)pdf.addPage();
-    pdf.addImage(canvas.toDataURL('image/jpeg',0.94),'JPEG',0,0,210,297,undefined,'FAST');
-   }
-   const safe=(project?.name||custom.name||'DP-MODULE-КП').replace(/[^a-zA-ZА-Яа-я0-9_-]+/g,'_');
-   pdf.save(`${safe}_${date.replaceAll('.','-')}.pdf`);
-  }catch(err){console.error(err);alert('Не удалось скачать PDF. Повторите попытку ещё раз.');}
-  finally{setDownloading(false);}
- };
- return <div className="quote-screen">
-  <div className="quote-toolbar">
-   <button className="secondary" onClick={onBack}><ArrowLeft/> Вернуться к расчёту</button>
-   <div className="quote-actions">
-    <button className="secondary" onClick={()=>window.print()}><Printer/> Печать</button>
-    <button className="primary" onClick={downloadPdf} disabled={downloading}>{downloading?<><span className="spinner"/> Формируем PDF...</>:<><Save/> Скачать КП (PDF)</>}</button>
-   </div>
-  </div>
-  <div className="pdf-preview">
-   <section className="pdf-export-page template-cover">
-    <div className="template-logo">DP <b>MODULE</b></div>
-    <div className="template-cover-grid">
-      <div className="cover-left"><div className="eyebrow">ИНДИВИДУАЛЬНОЕ ПРЕДЛОЖЕНИЕ</div><h1>{pageTitle}</h1><h3>{kind==='custom'?'Индивидуальная конфигурация':kind==='complex'?'Готовый комплекс':'Индивидуальная комплектация'}</h3><p>{kind==='custom'?'Проект собран по пожеланиям клиента и согласованным параметрам.':`Конфигурация ${pageTitle} на базе выбранного проекта DP MODULE. Состав и стоимость формируются из базовой комплектации и согласованных позиций.`}</p></div>
-      <div className="cover-side"><div><span>КЛИЕНТ</span><b>{client.name||'Клиент'}</b></div><div><span>ПРОЕКТ</span><b>{project?.id||'Индивидуальный'}</b></div><div><span>ФУНДАМЕНТ</span><b>{foundationMode}</b></div><div><span>МОДУЛЕЙ</span><b>{kind==='custom'?custom.modules:'по проекту'}</b></div></div>
-    </div>
-    <div className="cover-total"><span>СТОИМОСТЬ ПО ТЕКУЩЕМУ РАСЧЁТУ</span><b>{money(total)}</b><small>База + опции + отдельные согласованные расходы</small></div>
-    <div className="template-footer"><span>DP MODULE • Коммерческое предложение</span><b>01</b></div>
-   </section>
-   <section className="pdf-export-page template-light">
-    <div className="template-logo dark">DP <b>MODULE</b></div><div className="eyebrow">01 / БАЗОВАЯ КОМПЛЕКТАЦИЯ</div><h2>Готовая заводская комплектация</h2><p className="lead">{family?.name||'DP MODULE'} • {pageTitle}. Основные элементы конструкции, отделки, остекления и электрики формируются на производстве.</p>
-    <div className="basic-grid">{basicItems.map((x,i)=><div key={x}><span>{String(i+1).padStart(2,'0')}</span><b>{x}</b></div>)}</div>
-    <div className="template-callout"><b>Параметры проекта</b><div className="metrics"><span><small>ПЛОЩАДЬ</small><b>{kind==='custom'?(custom.area||'—'):(project?.area||'—')} м²</b></span><span><small>ГАБАРИТЫ</small><b>{kind==='custom'?`${custom.length||'—'} × ${custom.width||'—'} × ${custom.height||'—'}`:(project?.dimensions||'по проекту')}</b></span><span><small>БАЗА</small><b>{money(base)}</b></span></div></div>
-    <div className="template-footer light"><span>DP MODULE • Базовая комплектация</span><b>02</b></div>
-   </section>
-   <section className="pdf-export-page template-light">
-    <div className="template-logo dark">DP <b>MODULE</b></div><div className="eyebrow">02 / ПЛАНИРОВКА</div><h2>{kind==='custom'?'Планировка под пожелания клиента':`Планировка «${pageTitle}»`}</h2><p className="lead">{kind==='custom'?'Планировочные требования менеджера фиксируются для дальнейшей технической проработки.':`Планировка и основные габариты взяты из каталога DP MODULE для выбранной модели.`}</p>
-    <div className="plan-frame">{planSrc?<img src={planSrc} alt="Планировка"/>:<div className="custom-plan"><div className="plan-boxes">{String(custom.rooms||'Планировка по пожеланиям').split(',').slice(0,8).map((r,i)=><div key={i}>{r.trim()||'Помещение'}</div>)}</div><small>Чертёж индивидуального проекта оформляется после согласования планировки.</small></div>}</div>
-    <div className="metrics three"><span><small>ПЛОЩАДЬ</small><b>{kind==='custom'?(custom.area||'—'):(project?.area||'—')} м²</b></span><span><small>ВЫСОТА</small><b>{kind==='custom'?(custom.height||'—'):(project?.dimensions?.split('×').pop()?.trim()||'—')} м</b></span><span><small>МОДУЛЕЙ</small><b>{kind==='custom'?custom.modules:'по проекту'}</b></span></div>
-    <div className="template-footer light"><span>DP MODULE • Планировка</span><b>03</b></div>
-   </section>
-   <section className="pdf-export-page template-light">
-    <div className="template-logo dark">DP <b>MODULE</b></div><div className="eyebrow">03 / ПОСАДКА НА ФУНДАМЕНТ</div><h2>{foundationMode==='existing'?'Готовый фундамент заказчика используется':'Основание и монтаж'}</h2><p className="lead">{foundationText}</p>
-    <div className="foundation-card"><div className="foundation-visual"><div className="foundation-outline"><span>{foundationMode==='existing'?'СУЩЕСТВУЮЩИЙ ФУНДАМЕНТ':'ОСНОВАНИЕ ПРОЕКТА'}</span></div><div className="foundation-line"><i/><span>{foundationMode==='existing'?'координационная схема':'проектное решение'}</span></div></div><div className="foundation-side"><b>ПЕРЕД МОНТАЖОМ</b><p>{foundationMode==='existing'?'Проверить геометрию основания и необходимость локального усиления.':'Параметры основания согласовать по проекту и расчёту.'}</p><div className="warning-box">Схема посадки является координационной и не заменяет конструктивный расчёт.</div></div></div>
-    <div className="template-footer light"><span>DP MODULE • Фундамент</span><b>04</b></div>
-   </section>
-   <section className="pdf-export-page template-light">
-    <div className="template-logo dark">DP <b>MODULE</b></div><div className="eyebrow">04 / СТОИМОСТЬ</div><h2>Понятный бюджет проекта</h2><p className="lead">Стоимость дома сформирована из базовой комплектации и согласованных позиций. Доставка, фундамент и монтаж вынесены отдельно.</p>
-    <table className="quote-table"><thead><tr><th>ПОЗИЦИЯ</th><th>РАСЧЁТ</th><th>СУММА</th></tr></thead><tbody>{priceRows.map((r,i)=><tr key={i}><td>{r.name}</td><td>{r.calc}</td><td>{money(r.price)}</td></tr>)}</tbody></table>
-    <div className="cost-summary"><div><span>СТОИМОСТЬ ДОМА</span><b>{money(houseCost)}</b></div><div><span>ОТДЕЛЬНЫЕ РАСХОДЫ</span><b>{money(separateCost)}</b></div><div className="grand"><span>ИТОГО ПО ТЕКУЩЕМУ РАСЧЁТУ</span><b>{money(total)}</b></div></div>
-    <div className="template-note"><b>Следующий шаг</b><p>Зафиксировать итоговую комплектацию, проверить технические условия и согласовать параметры проекта перед запуском в производство.</p></div>
-    <div className="template-footer light"><span>DP MODULE • Итог</span><b>05</b></div>
-   </section>
-  </div>
- </div>
-}
-function QuotesPage({quotes}:{quotes:Quote[]}){return <><div className="herohead"><div><div className="eyebrow">ИСТОРИЯ КП</div><h1>Коммерческие предложения</h1><p>Сохраняются в браузере текущего устройства.</p></div></div><div className="table-card"><table><thead><tr><th>Номер</th><th>Клиент</th><th>Проект</th><th>Итог</th><th>Дата</th></tr></thead><tbody>{quotes.map(q=><tr key={q.id}><td><b>{q.id}</b></td><td>{q.client.name||'—'}<small>{q.client.phone}</small></td><td>{q.project}</td><td>{money(q.total)}</td><td>{new Date(q.createdAt).toLocaleDateString('ru-RU')}</td></tr>)}</tbody></table>{!quotes.length&&<div className="empty">Сохранённых КП пока нет.</div>}</div></>}
-function ClientsPage({clients,client,setClient,addClient}:{clients:any[];client:any;setClient:any;addClient:any}){return <><div className="herohead"><div><div className="eyebrow">CRM</div><h1>Клиенты</h1><p>Локальный список для прототипа GitHub Pages.</p></div></div><div className="form-card"><div className="fields"><Field label="ФИО"><input value={client.name} onChange={e=>setClient({...client,name:e.target.value})}/></Field><Field label="Телефон"><input value={client.phone} onChange={e=>setClient({...client,phone:e.target.value})}/></Field><Field label="E-mail"><input value={client.email} onChange={e=>setClient({...client,email:e.target.value})}/></Field><Field label="Город"><input value={client.city} onChange={e=>setClient({...client,city:e.target.value})}/></Field></div><button className="primary" onClick={addClient}>Сохранить клиента</button></div><div className="table-card"><table><thead><tr><th>ФИО</th><th>Телефон</th><th>E-mail</th><th>Город</th></tr></thead><tbody>{clients.map(c=><tr key={c.id}><td>{c.name}</td><td>{c.phone}</td><td>{c.email}</td><td>{c.city}</td></tr>)}</tbody></table></div></>}
+function QuotePage({kind,project,custom,selected,manualItems,client,external,base,total,deliveryCity,deliveryMode,foundationMode,montageMode,onBack}:{kind:any;project:any;custom:any;selected:string[];manualItems:ManualItem[];client:any;external:any;base:number;total:number;deliveryCity:string;deliveryMode:string;foundationMode:string;montageMode:string;onBack:any}){const opts=selected.map(id=>catalog.options.find(o=>o.id===id)).filter(Boolean);return <div className="quote-screen"><div className="quote-toolbar"><button className="secondary" onClick={onBack}><ArrowLeft/> Вернуться</button><button className="primary" onClick={()=>window.print()}><Printer/> Печать / PDF</button></div><article className="quote"><section className="qcover"><div className="qlogo">DP <b>MODULE</b></div><div><div className="eyebrow">КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ</div><h1>{kind==='custom'?custom.name:project?.name}</h1><p>{kind==='custom'?'Индивидуальное предложение':kind==='complex'?'Готовый комплекс':'Индивидуальная комплектация'}</p></div><div><small>СТОИМОСТЬ ПО ТЕКУЩЕМУ РАСЧЁТУ</small><strong>{money(total)}</strong></div></section><section><div className="qeyebrow">01 / КОНФИГУРАЦИЯ</div><h2>Параметры проекта</h2><div className="qgrid"><div><b>Клиент</b><span>{client.name||'—'}</span></div><div><b>Телефон</b><span>{client.phone||'—'}</span></div><div><b>Площадь</b><span>{kind==='custom'?custom.area||'—':project?.area?project.area+' м²':'—'}</span></div><div><b>Модулей</b><span>{kind==='custom'?custom.modules:'по проекту'}</span></div></div><div className="qgrid qgrid-2"><div><b>Город доставки</b><span>{deliveryCity||'Уточняется'}</span></div><div><b>Фундамент</b><span>{foundationMode}</span></div></div></section><section><div className="qeyebrow">02 / СМЕТА</div><h2>Согласованные позиции</h2><table><tbody><tr><td>Базовая комплектация</td><td>{money(base)}</td></tr>{opts.map((o:any)=><tr key={o.id}><td>{o.name}<small>{o.calc}</small></td><td>{money(o.price)}</td></tr>)}{manualItems.map(i=><tr key={i.id}><td>{i.name}<small>{i.source}</small></td><td>{money(i.price)}</td></tr>)}{external.delivery>0&&<tr><td>Доставка{deliveryCity?` — ${deliveryCity}`:''}<small>{deliveryMode==='doc-example'?'Документный пример':'Согласованная стоимость'}</small></td><td>{money(external.delivery)}</td></tr>}{external.foundation>0&&<tr><td>Фундамент<small>{foundationMode}</small></td><td>{money(external.foundation)}</td></tr>}{external.montage>0&&<tr><td>Монтаж<small>{montageMode}</small></td><td>{money(external.montage)}</td></tr>}<tr className="grand"><td>ИТОГО</td><td>{money(total)}</td></tr></tbody></table></section><section><div className="qeyebrow">03 / ВАЖНО</div><p>В стоимость дома входят базовая комплектация и выбранные позиции. Доставка, фундамент и монтаж вынесены отдельно. Для индивидуальных решений технические параметры и нестандартные работы требуют проверки.</p><div className="note">Шаблон структуры построен по присланным КП «Модерн 60» и «Канада 24».</div></section></article></div>}
+function QuotesPage({quotes}:{quotes:Quote[]}){return <><div className="herohead"><div><div className="eyebrow">ИСТОРИЯ КП</div><h1>Коммерческие предложения</h1><p>Ваши КП хранятся в облачной базе и доступны после входа с любого компьютера.</p></div></div><div className="table-card"><table><thead><tr><th>Номер</th><th>Клиент</th><th>Проект</th><th>Итог</th><th>Дата</th></tr></thead><tbody>{quotes.map(q=><tr key={q.id}><td><b>{q.id}</b></td><td>{q.client.name||'—'}<small>{q.client.phone}</small></td><td>{q.project}</td><td>{money(q.total)}</td><td>{new Date(q.createdAt).toLocaleDateString('ru-RU')}</td></tr>)}</tbody></table>{!quotes.length&&<div className="empty">Сохранённых КП пока нет.</div>}</div></>}
+function ClientsPage({clients,client,setClient,addClient}:{clients:any[];client:any;setClient:any;addClient:any}){return <><div className="herohead"><div><div className="eyebrow">CRM</div><h1>Клиенты</h1><p>Клиенты сохраняются в облачной базе и принадлежат вашему аккаунту.</p></div></div><div className="form-card"><div className="fields"><Field label="ФИО"><input value={client.name} onChange={e=>setClient({...client,name:e.target.value})}/></Field><Field label="Телефон"><input value={client.phone} onChange={e=>setClient({...client,phone:e.target.value})}/></Field><Field label="E-mail"><input value={client.email} onChange={e=>setClient({...client,email:e.target.value})}/></Field><Field label="Город"><input value={client.city} onChange={e=>setClient({...client,city:e.target.value})}/></Field></div><button className="primary" onClick={addClient}>Сохранить клиента</button></div><div className="table-card"><table><thead><tr><th>ФИО</th><th>Телефон</th><th>E-mail</th><th>Город</th></tr></thead><tbody>{clients.map(c=><tr key={c.id}><td>{c.name}</td><td>{c.phone}</td><td>{c.email}</td><td>{c.city}</td></tr>)}</tbody></table></div></>}
 function SettingsPage(){return <><div className="herohead"><div><div className="eyebrow">НАСТРОЙКИ</div><h1>Источник цен</h1><p>В интерфейсе явно разделены цены из каталога, цены из КП и ручные согласованные позиции.</p></div></div><div className="settings"><div className="form-card"><h3>Документно подтверждено</h3><ul><li>Модели, площади, габариты и базовые цены — из каталога.</li><li>Опции «Модерн 60» — из отдельного КП.</li><li>Доставка 230 000 ₽, свайный фундамент 220 000 ₽ и монтаж 300 000 ₽ — из КП «Модерн 60».</li><li>Бесплатная установка и монтаж до 70 км от производства — из каталога.</li><li>Для «Канада 24» сохранена логика существующего фундамента и 2 дополнительных свай без выдуманной цены усиления.</li></ul></div><div className="form-card"><h3>Не подставляется автоматически</h3><ul><li>Городская стоимость доставки, если её нет в загруженных документах.</li><li>Цена ФБС, если её нет в загруженных документах.</li><li>Цена индивидуального конструктивного решения.</li></ul></div></div></>}
 class Boundary extends React.Component<React.PropsWithChildren,{error:string|null}>{state={error:null};static getDerivedStateFromError(e:unknown){return {error:e instanceof Error?e.message:String(e)}}render(){return this.state.error?<div className="errorbox"><h1>Ошибка запуска DP MODULE</h1><pre>{this.state.error}</pre></div>:this.props.children}}
-createRoot(document.getElementById('root')!).render(<Boundary><App/></Boundary>);
+createRoot(document.getElementById('root')!).render(<Boundary><AuthGate/></Boundary>);
