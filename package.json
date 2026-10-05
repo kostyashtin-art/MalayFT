@@ -1,9 +1,9 @@
 {
   "name":"dp-module-sales-github",
   "private":true,
-  "version":"2.1.0",
+  "version":"2.1.1",
   "type":"module",
   "scripts":{"dev":"vite --host 0.0.0.0","build":"vite build","preview":"vite preview"},
-  "dependencies":{"@vitejs/plugin-react":"latest","react":"latest","react-dom":"latest","vite":"latest","typescript":"latest","lucide-react":"latest"},
-  "devDependencies":{}
+  "dependencies":{"lucide-react":"0.511.0","react":"19.1.0","react-dom":"19.1.0"},
+  "devDependencies":{"@vitejs/plugin-react":"4.3.4","typescript":"5.8.3","vite":"6.3.5"}
 }
