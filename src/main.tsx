@@ -26,7 +26,11 @@ function App(){
  },[catalog,search]);
  const chooseProject=(p:Project)=>{setProject(p);setKind('ready');setSelected([]);setView('config');};
  const reset=()=>{setProject(null);setSelected([]);setClient({name:'',phone:'',email:''});setExternal({delivery:0,foundation:0,montage:0});setCustom({name:'Индивидуальный проект',base:0,area:0,modules:1,length:'',width:'',height:'2700',rooms:'',foundation:'',color:'',notes:''});setView('catalog');};
- const saveQuote=async()=>{const q:Quote={number:uid(),kind,client:client.name,phone:client.phone,email:client.email,project:kind==='ready'?(project?.name||''):custom.name,base,items:selected.map(id=>{const o=options.find(x=>x.id===id)!;return{name:o.name,price:o.price,calc:o.calc}}),external:[\n     external.delivery ? {name:'Доставка',price:external.delivery} : null,\n     external.foundation ? {name:'Фундамент',price:external.foundation} : null,\n     external.montage ? {name:'Монтаж',price:external.montage} : null\n   ].filter(Boolean) as {name:string;price:number}[],notes:kind==='custom'?custom.notes:'',manager:'Менеджер DP MODULE',createdAt:new Date().toISOString()};
+ const saveQuote=async()=>{const q:Quote={number:uid(),kind,client:client.name,phone:client.phone,email:client.email,project:kind==='ready'?(project?.name||''):custom.name,base,items:selected.map(id=>{const o=options.find(x=>x.id===id)!;return{name:o.name,price:o.price,calc:o.calc}}),external:[
+     external.delivery ? {name:'Доставка',price:external.delivery} : null,
+     external.foundation ? {name:'Фундамент',price:external.foundation} : null,
+     external.montage ? {name:'Монтаж',price:external.montage} : null
+   ].filter(Boolean) as {name:string;price:number}[],notes:kind==='custom'?custom.notes:'',manager:'Менеджер DP MODULE',createdAt:new Date().toISOString()};
    const saved={...q,total,id:Date.now(),created_at:new Date().toISOString()}; const next=[saved,...quotes]; setQuotes(next); localStorage.setItem('dp_quotes',JSON.stringify(next)); localStorage.setItem('dp_last_quote',JSON.stringify(saved)); setToast('КП сохранено в браузере'); setTimeout(()=>setToast(''),1800);
  };
  if(!catalog)return <div className="loading"><div className="logo">DP <b>MODULE</b></div><p>Загружаем каталог…</p></div>;
