@@ -28,3 +28,14 @@
 .draw-stage .draw-canvas-wrap img{display:block!important;width:auto!important;height:auto!important;max-width:100%!important;max-height:100%!important;user-select:none!important;pointer-events:none!important}
 .draw-stage .draw-canvas-wrap canvas{position:absolute!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;max-width:none!important;transform:none!important;cursor:crosshair!important;touch-action:none!important;z-index:2!important}
 .draw-toolbar .draw-size{min-width:220px!important}
+
+/* SVG plan editor: image and vector layer share one exact coordinate system */
+.svg-draw-stage{overflow:auto!important;display:flex!important;align-items:flex-start!important;justify-content:flex-start!important;padding:22px!important;background:#e8e8e3!important}
+.svg-plan-wrap{position:relative;flex:0 0 auto;line-height:0;transform-origin:top left}
+.svg-plan-wrap>img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;pointer-events:none;user-select:none}
+.svg-plan-wrap>svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible;cursor:crosshair;touch-action:none;user-select:none}
+.svg-zoom{display:flex;align-items:center;gap:6px;margin-left:auto;padding:0 4px}
+.svg-zoom button{min-width:34px;justify-content:center;padding:8px 10px!important}
+.svg-zoom span{min-width:52px;text-align:center;font-size:12px;font-weight:800}
+.draw-toolbar button:disabled{opacity:.35;cursor:not-allowed}
+@media(max-width:900px){.svg-draw-stage{padding:12px!important}.svg-zoom{margin-left:0}.draw-toolbar .draw-size{min-width:190px!important}}
