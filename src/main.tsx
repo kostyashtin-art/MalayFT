@@ -103,74 +103,76 @@ function PlanEditor({src,title,onClose}:{src:string;title:string;onClose:()=>voi
  const canvasRef=useRef<HTMLCanvasElement|null>(null);
  const drawing=useRef(false);
  const last=useRef({x:0,y:0});
- const strokes=useRef<{x1:number;y1:number;x2:number;y2:number;color:string;width:number;tool:'pen'|'eraser'}[]>([]);
+ type Stroke={x1:number;y1:number;x2:number;y2:number;color:string;width:number;tool:'pen'|'eraser'};
+ const strokes=useRef<Stroke[]>([]);
  const [tool,setTool]=useState<'pen'|'eraser'>('pen');
  const [color,setColor]=useState('#E56E20');
- const [width,setWidth]=useState(5);
- const storageKey=`dp-plan-strokes-${encodeURIComponent(src)}`;
- const legacyKey=`dp-plan-drawing-${encodeURIComponent(src)}`;
+ const [penWidth,setPenWidth]=useState(5);
+ const [eraserWidth,setEraserWidth]=useState(18);
+ const [ready,setReady]=useState(false);
+ const storageKey=`dp-plan-strokes-v3-${encodeURIComponent(src)}`;
 
  const redraw=()=>{
    const img=imgRef.current,canvas=canvasRef.current;
-   if(!img||!canvas)return;
-   const r=img.getBoundingClientRect();
-   const dpr=window.devicePixelRatio||1;
-   canvas.width=Math.max(1,Math.round(r.width*dpr));
-   canvas.height=Math.max(1,Math.round(r.height*dpr));
-   canvas.style.width=`${r.width}px`;
-   canvas.style.height=`${r.height}px`;
+   if(!img||!canvas||!img.naturalWidth||!img.naturalHeight)return;
+   const rect=img.getBoundingClientRect();
    const ctx=canvas.getContext('2d'); if(!ctx)return;
-   ctx.setTransform(dpr,0,0,dpr,0,0);
-   ctx.clearRect(0,0,r.width,r.height);
-   ctx.lineCap='round';ctx.lineJoin='round';
+   canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+   ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.lineCap='round';ctx.lineJoin='round';
+   const scale=img.naturalWidth/(rect.width||img.naturalWidth);
    for(const s of strokes.current){
      ctx.globalCompositeOperation=s.tool==='eraser'?'destination-out':'source-over';
      ctx.strokeStyle=s.tool==='eraser'?'rgba(0,0,0,1)':s.color;
-     ctx.lineWidth=s.width;
-     ctx.beginPath();
-     ctx.moveTo(s.x1*r.width,s.y1*r.height);
-     ctx.lineTo(s.x2*r.width,s.y2*r.height);
-     ctx.stroke();
+     ctx.lineWidth=Math.max(1,s.width*scale);
+     ctx.beginPath();ctx.moveTo(s.x1,s.y1);ctx.lineTo(s.x2,s.y2);ctx.stroke();
    }
    ctx.globalCompositeOperation='source-over';
- };
- const loadStrokes=()=>{
-   try{
-     const raw=localStorage.getItem(storageKey);
-     strokes.current=raw?JSON.parse(raw):[];
-     if(!Array.isArray(strokes.current))strokes.current=[];
-   }catch{strokes.current=[]}
+   setReady(true);
  };
  useEffect(()=>{
-   const img=imgRef.current; if(!img)return;
-   loadStrokes();
-   const sync=()=>redraw();
-   if(img.complete)sync(); else img.onload=sync;
-   window.addEventListener('resize',sync);
-   return()=>{window.removeEventListener('resize',sync);img.onload=null};
- },[src]);
- const point=(e:React.PointerEvent<HTMLCanvasElement>)=>{const rect=e.currentTarget.getBoundingClientRect();return{x:Math.max(0,Math.min(rect.width,e.clientX-rect.left)),y:Math.max(0,Math.min(rect.height,e.clientY-rect.top))}};
- const start=(e:React.PointerEvent<HTMLCanvasElement>)=>{e.currentTarget.setPointerCapture(e.pointerId);drawing.current=true;last.current=point(e)};
- const move=(e:React.PointerEvent<HTMLCanvasElement>)=>{
-   if(!drawing.current)return;
-   const canvas=e.currentTarget;const rect=canvas.getBoundingClientRect();const p=point(e);
-   const seg={x1:last.current.x/rect.width,y1:last.current.y/rect.height,x2:p.x/rect.width,y2:p.y/rect.height,color,width,tool};
-   strokes.current.push(seg);
-   const ctx=canvas.getContext('2d');if(ctx){const dpr=window.devicePixelRatio||1;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.lineCap='round';ctx.lineJoin='round';ctx.globalCompositeOperation=tool==='eraser'?'destination-out':'source-over';ctx.strokeStyle=tool==='eraser'?'rgba(0,0,0,1)':color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(last.current.x,last.current.y);ctx.lineTo(p.x,p.y);ctx.stroke();ctx.globalCompositeOperation='source-over'}
-   last.current=p;
- };
- const stop=()=>{drawing.current=false};
- const save=()=>{localStorage.setItem(storageKey,JSON.stringify(strokes.current));localStorage.removeItem(legacyKey)};
- const clear=()=>{strokes.current=[];localStorage.removeItem(storageKey);localStorage.removeItem(legacyKey);redraw()};
- const download=()=>{
+   try{
+     const raw=localStorage.getItem(storageKey);
+     const parsed=raw?JSON.parse(raw):[];
+     strokes.current=Array.isArray(parsed)?parsed:[];
+   }catch{strokes.current=[]}
    const img=imgRef.current;if(!img)return;
+   const sync=()=>requestAnimationFrame(redraw);
+   const ro=new ResizeObserver(sync);ro.observe(img);
+   if(img.complete)sync();else img.addEventListener('load',sync,{once:true});
+   window.addEventListener('resize',sync);
+   return()=>{ro.disconnect();window.removeEventListener('resize',sync)};
+ },[src]);
+ const point=(e:React.PointerEvent<HTMLCanvasElement>)=>{
+   const rect=e.currentTarget.getBoundingClientRect();
+   const img=imgRef.current;
+   const nw=img?.naturalWidth||rect.width,nh=img?.naturalHeight||rect.height;
+   return {x:Math.max(0,Math.min(nw,(e.clientX-rect.left)*(nw/rect.width))),y:Math.max(0,Math.min(nh,(e.clientY-rect.top)*(nh/rect.height)))};
+ };
+ const start=(e:React.PointerEvent<HTMLCanvasElement>)=>{if(!ready)return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);drawing.current=true;last.current=point(e)};
+ const move=(e:React.PointerEvent<HTMLCanvasElement>)=>{
+   if(!drawing.current)return;e.preventDefault();
+   const p=point(e),img=imgRef.current,canvas=e.currentTarget,ctx=canvas.getContext('2d');if(!img||!ctx)return;
+   const rect=canvas.getBoundingClientRect(),scale=img.naturalWidth/(rect.width||img.naturalWidth);
+   const screenWidth=tool==='pen'?penWidth:eraserWidth;
+   const seg:Stroke={x1:last.current.x,y1:last.current.y,x2:p.x,y2:p.y,color,width:screenWidth,tool};
+   strokes.current.push(seg);
+   ctx.setTransform(1,0,0,1,0,0);ctx.lineCap='round';ctx.lineJoin='round';ctx.globalCompositeOperation=tool==='eraser'?'destination-out':'source-over';ctx.strokeStyle=tool==='eraser'?'rgba(0,0,0,1)':color;ctx.lineWidth=Math.max(1,screenWidth*scale);
+   ctx.beginPath();ctx.moveTo(last.current.x,last.current.y);ctx.lineTo(p.x,p.y);ctx.stroke();ctx.globalCompositeOperation='source-over';last.current=p;
+ };
+ const stop=(e:React.PointerEvent<HTMLCanvasElement>)=>{if(!drawing.current)return;drawing.current=false;try{e.currentTarget.releasePointerCapture(e.pointerId)}catch{}};
+ const save=()=>localStorage.setItem(storageKey,JSON.stringify(strokes.current));
+ const clear=()=>{strokes.current=[];localStorage.removeItem(storageKey);redraw()};
+ const download=()=>{
+   const img=imgRef.current;if(!img||!img.naturalWidth||!img.naturalHeight)return;
    const out=document.createElement('canvas');out.width=img.naturalWidth;out.height=img.naturalHeight;
    const ctx=out.getContext('2d');if(!ctx)return;ctx.drawImage(img,0,0,out.width,out.height);ctx.lineCap='round';ctx.lineJoin='round';
-   for(const s of strokes.current){ctx.globalCompositeOperation=s.tool==='eraser'?'destination-out':'source-over';ctx.strokeStyle=s.tool==='eraser'?'rgba(0,0,0,1)':s.color;ctx.lineWidth=Math.max(1,s.width*(out.width/(img.getBoundingClientRect().width||out.width)));ctx.beginPath();ctx.moveTo(s.x1*out.width,s.y1*out.height);ctx.lineTo(s.x2*out.width,s.y2*out.height);ctx.stroke()}
+   for(const s of strokes.current){ctx.globalCompositeOperation=s.tool==='eraser'?'destination-out':'source-over';ctx.strokeStyle=s.tool==='eraser'?'rgba(0,0,0,1)':s.color;ctx.lineWidth=Math.max(1,s.width*(img.naturalWidth/(img.clientWidth||img.getBoundingClientRect().width)));ctx.beginPath();ctx.moveTo(s.x1,s.y1);ctx.lineTo(s.x2,s.y2);ctx.stroke()}
    ctx.globalCompositeOperation='source-over';
-   const a=document.createElement('a');a.href=out.toDataURL('image/png');a.download=`${title.replace(/[^\p{L}\p{N}]+/gu,'-')}-план-с-пометками.png`;a.click();
+   out.toBlob(blob=>{if(!blob)return;const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${title.replace(/[^\p{L}\p{N}]+/gu,'-')}-план-с-пометками.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)},'image/png');
  };
- return <div className="draw-modal"><div className="draw-backdrop" onClick={onClose}/><div className="draw-panel"><div className="draw-header"><div><b>План: {title}</b></div><button className="modal-close" onClick={onClose}><X/></button></div><div className="draw-toolbar"><button className={tool==='pen'?'active-tool':''} onClick={()=>setTool('pen')}><PenLine size={16}/> Кисть</button><button className={tool==='eraser'?'active-tool':''} onClick={()=>setTool('eraser')}><Eraser size={16}/> Ластик</button><label>Цвет <input type="color" value={color} onChange={e=>setColor(e.target.value)}/></label><label>Толщина <input type="range" min="1" max="18" value={width} onChange={e=>setWidth(+e.target.value)}/><span>{width}px</span></label><button onClick={save}><Check size={16}/> Сохранить</button><button onClick={clear}>Очистить</button><button className="primary" onClick={download}><Download size={16}/> Скачать план</button></div><div className="draw-stage"><img ref={imgRef} src={src} alt={title}/><canvas ref={canvasRef} onPointerDown={start} onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} onPointerLeave={stop}/></div></div></div>}
+ const activeWidth=tool==='pen'?penWidth:eraserWidth;
+ const setActiveWidth=(v:number)=>tool==='pen'?setPenWidth(v):setEraserWidth(v);
+ return <div className="draw-modal"><div className="draw-backdrop" onClick={onClose}/><div className="draw-panel"><div className="draw-header"><div><b>План: {title}</b></div><button className="modal-close" onClick={onClose}><X/></button></div><div className="draw-toolbar"><button className={tool==='pen'?'active-tool':''} onClick={()=>setTool('pen')}><PenLine size={16}/> Кисть</button><button className={tool==='eraser'?'active-tool':''} onClick={()=>setTool('eraser')}><Eraser size={16}/> Ластик</button>{tool==='pen'&&<label>Цвет <input type="color" value={color} onChange={e=>setColor(e.target.value)}/></label>}<label className="draw-size">Толщина {tool==='pen'?'кисти':'ластика'} <input type="range" min="1" max="50" value={activeWidth} onChange={e=>setActiveWidth(+e.target.value)}/><span>{activeWidth}px</span></label><button onClick={save}><Check size={16}/> Сохранить</button><button onClick={clear}>Очистить</button><button className="primary" onClick={download}><Download size={16}/> Скачать план</button></div><div className="draw-stage"><div className="draw-canvas-wrap"><img ref={imgRef} src={src} alt={title} draggable={false}/><canvas ref={canvasRef} onPointerDown={start} onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} onPointerLeave={stop}/></div></div></div></div>}
 
 function CustomPage({custom,setCustom,onNext}:{custom:any;setCustom:any;onNext:()=>void}){return <><div className="herohead"><div><h1>Свой проект</h1></div></div><div className="form-card"><div className="section-title">Параметры</div><div className="fields"><Field label="Название"><input value={custom.name} onChange={e=>setCustom({...custom,name:e.target.value})}/></Field><Field label="База, ₽"><input type="number" value={custom.base} onChange={e=>setCustom({...custom,base:+e.target.value})}/></Field><Field label="Площадь, м²"><input value={custom.area} onChange={e=>setCustom({...custom,area:e.target.value})}/></Field><Field label="Модулей"><input type="number" min="1" value={custom.modules} onChange={e=>setCustom({...custom,modules:e.target.value})}/></Field><Field label="Длина"><input value={custom.length} onChange={e=>setCustom({...custom,length:e.target.value})}/></Field><Field label="Ширина"><input value={custom.width} onChange={e=>setCustom({...custom,width:e.target.value})}/></Field><Field label="Высота, мм"><input value={custom.height} onChange={e=>setCustom({...custom,height:e.target.value})}/></Field><Field label="Комнаты"><input value={custom.rooms} onChange={e=>setCustom({...custom,rooms:e.target.value})}/></Field><Field label="Цвет"><input value={custom.color} onChange={e=>setCustom({...custom,color:e.target.value})}/></Field></div><Field label="Пожелания"><textarea value={custom.notes} onChange={e=>setCustom({...custom,notes:e.target.value})}/></Field><button className="primary" onClick={onNext}>К комплектации <ChevronRight/></button></div></>}
 function Field({label,children}:{label:string;children:any}){return <label className="field"><span>{label}</span>{children}</label>}
