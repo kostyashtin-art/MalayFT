@@ -39,3 +39,7 @@
 .svg-zoom span{min-width:52px;text-align:center;font-size:12px;font-weight:800}
 .draw-toolbar button:disabled{opacity:.35;cursor:not-allowed}
 @media(max-width:900px){.svg-draw-stage{padding:12px!important}.svg-zoom{margin-left:0}.draw-toolbar .draw-size{min-width:190px!important}}
+
+/* SVG editor: vector overlay must stay above the source plan. */
+.svg-plan-wrap>img{z-index:1!important}
+.svg-plan-wrap>svg{z-index:2!important;pointer-events:auto!important}
